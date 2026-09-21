@@ -1,4 +1,4 @@
-
+import re
 from math import sin, cos, atan, atan2, sqrt, pi, degrees, radians
 
 import numpy as np
@@ -95,6 +95,18 @@ def dans_butees(q1, q2, q4):
 def ecart_angle(e):
     """Ramene un ecart angulaire dans [-pi ; pi]."""
     return atan2(sin(e), cos(e))
+
+
+def bornes_xyz():
+    """Min et max de X, Y, Z sur tout l'espace de travail (balayage des butees)."""
+    q1 = np.linspace(Q1_MIN, Q1_MAX, 361)[:, None, None]
+    q2 = np.linspace(Q2_MIN, Q2_MAX, 136)[None, :, None]
+    q4 = np.linspace(Q4_MIN, Q4_MAX, 36)[None, None, :]
+    R = a + np.sin(q2) * (q4 + b)
+    x = R * np.sin(q1)
+    y = -R * np.cos(q1)
+    z = (q4 + b) * np.cos(q2)
+    return x.min(), x.max(), y.min(), y.max(), z.min(), z.max()
 
 
 def positions_corps(q1, q2, q4):
@@ -200,6 +212,13 @@ def sphere(scene, centre, rayon, couleur, nlat=8, nlon=14):
 # =============================================================================
 #  IHM  (selon le schema :  [q1..q4] [robot 3D] [X Y Z] [MGD / MGI / Validation])
 # =============================================================================
+# points de position du carre (X  Y  Z), un par ligne : modifiables dans l'interface
+POINTS_DEFAUT = ("-0.20   -1.65   0.25\n"
+                 " 0.20   -1.65   0.25\n"
+                 " 0.20   -1.25   0.25\n"
+                 "-0.20   -1.25   0.25\n"
+                 "-0.20   -1.65   0.25\n")
+
 BG = "#f4f4f4"
 ROUGE = "#c62828"
 BLEU = "#1f4fbf"
@@ -211,8 +230,8 @@ class Application(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("IHM  -  Robot porte-outil 4 ddl")
-        self.geometry("1200x660")
-        self.minsize(1000, 560)
+        self.geometry("1320x830")
+        self.minsize(1000, 700)
         self.configure(bg=BG)
 
         # etat courant du robot
@@ -227,10 +246,18 @@ class Application(tk.Tk):
         self.var_mgi = tk.BooleanVar(value=False)
         self.var_val = tk.BooleanVar(value=False)
 
+        # trajectoire : liste de points de position (X, Y, Z) suivis par la MGI
+        self.trace = []              # points deja atteints par P3
+        self.apercu = None           # points lus dans la zone de texte
+        self.apercu_ok = False       # True si tous les points sont atteignables
+        self.num_lignes = []         # numero de ligne (zone de texte) de chaque point
+        self.i_traj = 0              # prochain point a atteindre
+
         self._styles()
         self._construire()
         self.maj_etats()
         self.remplir_q()
+        self.maj_apercu(dessiner=False)
         self.calculer()
 
     # ---------------- styles ----------------
@@ -246,6 +273,8 @@ class Application(tk.Tk):
             st.configure(nom + ".TLabelframe.Label", background=BG,
                          foreground=couleur, font=("TkDefaultFont", 11, "bold"))
         st.configure("Champ.TEntry", padding=4)
+        st.configure("Hors.TEntry", padding=4, foreground=ROUGE)
+        st.map("Hors.TEntry", foreground=[("readonly", ROUGE), ("disabled", ROUGE)])
 
     # ---------------- construction ----------------
     def _construire(self):
@@ -255,6 +284,12 @@ class Application(tk.Tk):
         # --- colonne 0 : q1 q2 q3 q4
         cadre_q = ttk.Labelframe(self, text=" Articulations ", style="Rouge.TLabelframe")
         cadre_q.grid(row=0, column=0, sticky="ns", padx=(12, 6), pady=(12, 6))
+        plages_q = ["min : %.0f\nmax : %.0f" % (degrees(Q1_MIN), degrees(Q1_MAX)),
+                    "min : %.0f\nmax : %.0f" % (degrees(Q2_MIN), degrees(Q2_MAX)),
+                    "libre\n(sans butee)",
+                    "min : %.3f\nmax : %.3f" % (Q4_MIN, Q4_MAX)]
+        self.lim_q = [(degrees(Q1_MIN), degrees(Q1_MAX)), (degrees(Q2_MIN), degrees(Q2_MAX)),
+                      None, (Q4_MIN, Q4_MAX)]
         self.ent_q = []
         for i, nom in enumerate(["q1  (deg)", "q2  (deg)", "q3  (deg)", "q4  (m)"]):
             ttk.Label(cadre_q, text=nom, foreground=ROUGE,
@@ -263,6 +298,9 @@ class Application(tk.Tk):
             e = ttk.Entry(cadre_q, textvariable=self.var_q[i], width=11,
                           justify="right", style="Champ.TEntry")
             e.grid(row=2 * i + 1, column=0, padx=12, pady=(2, 4))
+            ttk.Label(cadre_q, text=plages_q[i], foreground="#777", justify="left",
+                      font=("TkDefaultFont", 9)).grid(
+                row=2 * i + 1, column=1, sticky="w", padx=(0, 10))
             e.bind("<KeyRelease>", lambda ev: self.calculer())
             self.ent_q.append(e)
 
@@ -271,13 +309,18 @@ class Application(tk.Tk):
         cadre_3d.grid(row=0, column=1, sticky="nsew", padx=6, pady=(12, 6))
         self.fig = Figure(figsize=(6, 5), facecolor="white")
         self.ax = self.fig.add_subplot(111, projection="3d")
-        self.ax.view_init(elev=22, azim=30)      # vue initiale (modifiable a la souris)
+        self.ax.view_init(elev=35, azim=-35)      # vue initiale (modifiable a la souris)
         self.canvas = FigureCanvasTkAgg(self.fig, master=cadre_3d)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
         # --- colonne 2 : X Y Z
         cadre_p = ttk.Labelframe(self, text=" Position P3 ", style="Bleu.TLabelframe")
         cadre_p.grid(row=0, column=2, sticky="ns", padx=6, pady=(12, 6))
+        xmin, xmax, ymin, ymax, zmin, zmax = bornes_xyz()
+        plages_p = ["min : %.3f\nmax : %.3f" % (xmin, xmax),
+                    "min : %.3f\nmax : %.3f" % (ymin, ymax),
+                    "min : %.3f\nmax : %.3f" % (zmin, zmax)]
+        self.lim_p = [(xmin, xmax), (ymin, ymax), (zmin, zmax)]
         self.ent_p = []
         for i, nom in enumerate(["X  (m)", "Y  (m)", "Z  (m)"]):
             ttk.Label(cadre_p, text=nom, foreground=BLEU,
@@ -286,8 +329,14 @@ class Application(tk.Tk):
             e = ttk.Entry(cadre_p, textvariable=self.var_p[i], width=11,
                           justify="right", style="Champ.TEntry")
             e.grid(row=2 * i + 1, column=0, padx=12, pady=(2, 4))
+            ttk.Label(cadre_p, text=plages_p[i], foreground="#777", justify="left",
+                      font=("TkDefaultFont", 9)).grid(
+                row=2 * i + 1, column=1, sticky="w", padx=(0, 10))
             e.bind("<KeyRelease>", lambda ev: self.calculer())
             self.ent_p.append(e)
+        ttk.Label(cadre_p, text="bornes du volume atteignable\n(toutes les combinaisons\nne sont pas possibles)",
+                  foreground="#777", justify="left", font=("TkDefaultFont", 8)).grid(
+            row=6, column=0, columnspan=2, sticky="w", padx=12, pady=(10, 8))
 
         # --- colonne 3 : cases a cocher
         cadre_c = ttk.Frame(self)
@@ -299,9 +348,36 @@ class Application(tk.Tk):
         ttk.Checkbutton(cadre_c, text="Validation MGI", variable=self.var_val,
                         command=self.clic_val).pack(anchor="w", pady=8)
 
+        # --- trajectoire : points de position saisis en coordonnees X  Y  Z
+        traj = ttk.Labelframe(self, text=" Trajectoire : points de position suivis par la MGI ",
+                              style="Bleu.TLabelframe")
+        traj.grid(row=1, column=0, columnspan=4, sticky="ew", padx=12, pady=(0, 6))
+        ttk.Label(traj, text="Un point par ligne :   X    Y    Z    (en m)",
+                  foreground=BLEU).grid(row=0, column=0, sticky="w", padx=12, pady=(6, 0))
+        cadre_txt = ttk.Frame(traj)
+        cadre_txt.grid(row=1, column=0, rowspan=2, sticky="w", padx=12, pady=(2, 8))
+        self.txt_pts = tk.Text(cadre_txt, width=32, height=5, font="TkFixedFont",
+                               relief="solid", bd=1, wrap="none")
+        barre = ttk.Scrollbar(cadre_txt, orient="vertical", command=self.txt_pts.yview)
+        self.txt_pts.configure(yscrollcommand=barre.set)
+        self.txt_pts.pack(side="left")
+        barre.pack(side="left", fill="y")
+        self.txt_pts.insert("1.0", POINTS_DEFAUT)
+        self.txt_pts.tag_configure("atteint", background="#c8e6c9")
+        self.txt_pts.bind("<KeyRelease>", lambda ev: self.maj_apercu())
+        ttk.Button(traj, text="Point suivant", command=self.point_suivant).grid(
+            row=1, column=1, sticky="n", padx=(16, 6), pady=(2, 0))
+        ttk.Button(traj, text="Repartir du 1er point", command=self.repartir).grid(
+            row=1, column=2, sticky="n", padx=6, pady=(2, 0))
+        ttk.Button(traj, text="Effacer la trace", command=self.effacer_trace).grid(
+            row=1, column=3, sticky="n", padx=6, pady=(2, 0))
+        self.lbl_traj = ttk.Label(traj, text="", font=("TkDefaultFont", 10),
+                                  wraplength=720, justify="left")
+        self.lbl_traj.grid(row=2, column=1, columnspan=4, sticky="nw", padx=(16, 12), pady=(6, 6))
+
         # --- bas : messages
         bas = ttk.Labelframe(self, text=" Messages ")
-        bas.grid(row=1, column=0, columnspan=4, sticky="ew", padx=12, pady=(0, 12))
+        bas.grid(row=2, column=0, columnspan=4, sticky="ew", padx=12, pady=(0, 12))
         self.lbl_msg = ttk.Label(bas, text="", font=("TkDefaultFont", 10))
         self.lbl_msg.pack(anchor="w", padx=10, pady=(6, 0))
         self.lbl_val = ttk.Label(bas, text="", font=("TkDefaultFont", 10))
@@ -337,6 +413,23 @@ class Application(tk.Tk):
     def message(self, texte, couleur="#333"):
         self.lbl_msg.config(text=texte, foreground=couleur)
 
+    # ---------------- champs en rouge si hors [min ; max] ----------------
+    def hors_plage(self, texte, lim):
+        """True si le texte est un nombre en dehors de [min ; max]."""
+        if lim is None:
+            return False
+        try:
+            val = float(texte)
+        except ValueError:
+            return False
+        return not (lim[0] - 1e-6 <= val <= lim[1] + 1e-6)
+
+    def colorer_champs(self):
+        for e, var, lim in zip(self.ent_q, self.var_q, self.lim_q):
+            e.configure(style="Hors.TEntry" if self.hors_plage(var.get(), lim) else "Champ.TEntry")
+        for e, var, lim in zip(self.ent_p, self.var_p, self.lim_p):
+            e.configure(style="Hors.TEntry" if self.hors_plage(var.get(), lim) else "Champ.TEntry")
+
     # ---------------- remplissage des champs ----------------
     def remplir_q(self):
         for i in range(3):
@@ -349,6 +442,7 @@ class Application(tk.Tk):
 
     # ---------------- calcul ----------------
     def calculer(self):
+        self.colorer_champs()
         if self.var_mgd.get():
             try:
                 q1 = radians(float(self.var_q[0].get()))
@@ -394,6 +488,7 @@ class Application(tk.Tk):
             self.message("Cochez MGD ou MGI.", "#777")
             return
 
+        self.colorer_champs()
         self.rafraichir()
         self.afficher_validation()
 
@@ -416,6 +511,120 @@ class Application(tk.Tk):
                   % (e1, e2, e3, e4, "OK" if ok else "ECART",
                      "" if abs(e3) < TOLERANCE else "   (q3 n'agit pas sur P3)")),
             foreground=VERT if ok else ROUGE)
+
+    # =====================================================================
+    #  TRAJECTOIRE PAR POINTS DE POSITION : suivi geometrique par la MGI
+    #  Pas de temps ni de vitesse : chaque clic sur "Point suivant" envoie
+    #  P3 au point suivant avec la MGI. Le bras part toujours de sa pose
+    #  ACTUELLE : il ne revient jamais a la position 0.
+    # =====================================================================
+    def lire_points(self):
+        """Lit la zone de texte. Renvoie (points, numeros_de_ligne, message_erreur)."""
+        pts, nums = [], []
+        for n, ligne in enumerate(self.txt_pts.get("1.0", "end").split("\n"), 1):
+            texte = ligne.strip()
+            if texte == "" or texte.startswith("#"):
+                continue
+            texte = re.sub(r"\s*,\s+", " ", texte)        # "0.2, -1.65, 0.25" -> "0.2 -1.65 0.25"
+            if ";" in texte:
+                morceaux = [m.strip() for m in texte.split(";") if m.strip()]
+            else:
+                morceaux = texte.split()
+                if len(morceaux) == 1 and texte.count(",") == 2:
+                    morceaux = texte.split(",")
+            morceaux = [m.replace(",", ".") for m in morceaux]   # virgule decimale acceptee
+            if len(morceaux) != 3:
+                return None, None, "Ligne %d : il faut 3 nombres  X  Y  Z." % n
+            try:
+                pts.append(tuple(float(m) for m in morceaux))
+            except ValueError:
+                return None, None, "Ligne %d : nombre non valide." % n
+            nums.append(n)
+        if not pts:
+            return None, None, "Aucun point : ecrivez un point par ligne (X  Y  Z)."
+        return pts, nums, None
+
+    def verifier_points(self, pts, nums):
+        """(True, "") si tous les points sont atteignables, sinon (False, message)."""
+        for (x, y, z), n in zip(pts, nums):
+            q = MGI(x, y, z)
+            ok, msg = dans_butees(q[0], q[1], q[3])
+            if not ok:
+                return False, "Ligne %d (%.3f ; %.3f ; %.3f) hors espace de travail : %s" % (
+                    n, x, y, z, msg)
+        return True, ""
+
+    def maj_apercu(self, dessiner=True):
+        """Relit les points quand on modifie le texte, et redessine le trajet prevu."""
+        self.i_traj = 0
+        self.txt_pts.tag_remove("atteint", "1.0", "end")
+        pts, nums, err = self.lire_points()
+        if err:
+            self.apercu, self.apercu_ok, self.num_lignes = None, False, []
+            self.lbl_traj.config(text=err, foreground="#b26a00")
+        else:
+            self.apercu, self.num_lignes = pts, nums
+            self.apercu_ok, msg = self.verifier_points(pts, nums)
+            if self.apercu_ok:
+                self.lbl_traj.config(text="%d points, tous atteignables. "
+                                     "Cliquez sur \"Point suivant\"." % len(pts), foreground=VERT)
+            else:
+                self.lbl_traj.config(text=msg, foreground=ROUGE)
+        if dessiner:
+            self.rafraichir()
+
+    def point_suivant(self):
+        """Envoie P3 au point suivant avec la MGI, sans repasser par la position 0."""
+        if not self.apercu_ok or not self.apercu:
+            self.message("Trajectoire : corrigez d'abord la liste de points (voir le cadre).", ROUGE)
+            return
+        pts = self.apercu
+        if self.i_traj >= len(pts):
+            self.i_traj = 0
+        i = self.i_traj
+        x, y, z = pts[i]
+        q = MGI(x, y, z)
+        ok, msg = dans_butees(q[0], q[1], q[3])
+        if not ok:
+            self.message("Trajectoire : point %d hors espace de travail (%s)" % (i + 1, msg), ROUGE)
+            return
+        self.q = q                    # la nouvelle pose remplace l'ancienne : pas de retour a zero
+        self.remplir_q()
+        self.remplir_p((x, y, z))
+        p = MGD(q[0], q[1], q[2], q[3])
+        self.trace.append((p[0], p[1], p[2]))
+
+        # ligne du point atteint surlignee dans la zone de texte
+        self.txt_pts.tag_remove("atteint", "1.0", "end")
+        ligne = self.num_lignes[i]
+        self.txt_pts.tag_add("atteint", "%d.0" % ligne, "%d.end" % ligne)
+
+        # index du point suivant (si le trajet est ferme, on ne refait pas le point de depart)
+        self.i_traj = i + 1
+        fin = ""
+        if self.i_traj >= len(pts):
+            ferme = len(pts) > 1 and max(abs(pts[0][k] - pts[-1][k]) for k in range(3)) < 1e-9
+            self.i_traj = 1 if ferme else 0
+            fin = "   (fin du tour : le prochain clic continue le trace)"
+        self.message("Trajectoire : point %d/%d   P3 = (%.3f ; %.3f ; %.3f)   "
+                     "q1 = %.1f   q2 = %.1f   q4 = %.3f%s"
+                     % (i + 1, len(pts), p[0], p[1], p[2],
+                        degrees(q[0]), degrees(q[1]), q[3], fin), BLEU)
+        self.colorer_champs()
+        self.rafraichir()
+        self.afficher_validation()
+
+    def repartir(self):
+        """Le prochain clic ira au 1er point. Le bras ne bouge pas."""
+        self.i_traj = 0
+        self.txt_pts.tag_remove("atteint", "1.0", "end")
+        self.message("Le prochain clic ira au 1er point. Le bras reste ou il est.", "#777")
+
+    def effacer_trace(self):
+        """Efface le trace vert. Le bras ne bouge pas."""
+        self.trace = []
+        self.message("Trace effacee. Le bras reste a sa position actuelle.", "#777")
+        self.rafraichir()
 
     # ---------------- dessin du robot ----------------
     def rafraichir(self):
@@ -508,11 +717,24 @@ class Application(tk.Tk):
         robot.set_clip_on(False)
         self.ax.add_collection3d(robot)
 
+        # trajectoire : carre prevu (pointille) et trace deja parcourue (trait plein)
+        if self.apercu:
+            ap = np.array(self.apercu)
+            col_ap = "#6a1b9a" if self.apercu_ok else "#c62828"
+            self.ax.plot(ap[:, 0], ap[:, 1], ap[:, 2], "--", color=col_ap, lw=1.4,
+                         zorder=6, clip_on=False)
+            self.ax.plot(ap[:, 0], ap[:, 1], ap[:, 2], "o", color=col_ap, mfc="white",
+                         ms=4, zorder=6, clip_on=False)
+        if self.trace:
+            tr = np.array(self.trace)
+            self.ax.plot(tr[:, 0], tr[:, 1], tr[:, 2], "-o", color="#00897b", lw=2.6,
+                         ms=5, zorder=7, clip_on=False)
+
         haut = 0.55
         self.ax.set_xlim(-S, S)
         self.ax.set_ylim(-S, S)
         self.ax.set_zlim(ZSOL, haut)
-        self.ax.set_box_aspect((2 * S, 2 * S, haut - ZSOL), zoom=2.0)
+        self.ax.set_box_aspect((2 * S, 2 * S, haut - ZSOL), zoom=1.8)
         self.canvas.draw()
 
 
