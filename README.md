@@ -7,5 +7,6 @@ Le projet comprend
 - une vérifiaction de la consistence du modèle(MGI*MCD=Id)
 - interface homme-machine.
 ### A venir
-
+- trajectoire (position) en cours
+- cinématique
 
