@@ -218,6 +218,13 @@ POINTS_DEFAUT = ("-0.20   -1.65   0.25\n"
                  " 0.20   -1.25   0.25\n"
                  "-0.20   -1.25   0.25\n"
                  "-0.20   -1.65   0.25\n")
+# points de position du cercle (X  Y  Z), un par ligne : modifiables dans l'interface
+POINTS_CERCLE = "\n".join(
+    "%6.3f  %6.3f  %.2f" % (0.20 * np.cos(2 * np.pi * k / 16),
+                            -1.45 + 0.20 * np.sin(2 * np.pi * k / 16),
+                            0.25)
+    for k in range(17)
+) + "\n"
 
 BG = "#f4f4f4"
 ROUGE = "#c62828"
@@ -247,11 +254,15 @@ class Application(tk.Tk):
         self.var_val = tk.BooleanVar(value=False)
 
         # trajectoire : liste de points de position (X, Y, Z) suivis par la MGI
-        self.trace = []              # points deja atteints par P3
         self.apercu = None           # points lus dans la zone de texte
+        self.en_cours = False        # True pendant le deplacement en petits pas
         self.apercu_ok = False       # True si tous les points sont atteignables
         self.num_lignes = []         # numero de ligne (zone de texte) de chaque point
         self.i_traj = 0              # prochain point a atteindre
+        self.auto = False            # True pendant l'enchainement automatique
+        self.compte_auto = 0
+        self.total_auto = 0
+        self.after_id_auto = None
 
         self._styles()
         self._construire()
@@ -369,8 +380,14 @@ class Application(tk.Tk):
             row=1, column=1, sticky="n", padx=(16, 6), pady=(2, 0))
         ttk.Button(traj, text="Repartir du 1er point", command=self.repartir).grid(
             row=1, column=2, sticky="n", padx=6, pady=(2, 0))
-        ttk.Button(traj, text="Effacer la trace", command=self.effacer_trace).grid(
+        ttk.Button(traj, text="Carre", command=lambda: self.charger_points(POINTS_DEFAUT)).grid(
             row=1, column=3, sticky="n", padx=6, pady=(2, 0))
+        ttk.Button(traj, text="Cercle", command=lambda: self.charger_points(POINTS_CERCLE)).grid(
+            row=1, column=4, sticky="n", padx=6, pady=(2, 0))
+        ttk.Button(traj, text="Lancer la trajectoire", command=self.lancer_trajectoire).grid(
+            row=1, column=5, sticky="n", padx=(16, 6), pady=(2, 0))
+        ttk.Button(traj, text="Stop", command=self.stop_trajectoire).grid(
+            row=1, column=6, sticky="n", padx=6, pady=(2, 0))
         self.lbl_traj = ttk.Label(traj, text="", font=("TkDefaultFont", 10),
                                   wraplength=720, justify="left")
         self.lbl_traj.grid(row=2, column=1, columnspan=4, sticky="nw", padx=(16, 12), pady=(6, 6))
@@ -442,6 +459,8 @@ class Application(tk.Tk):
 
     # ---------------- calcul ----------------
     def calculer(self):
+        if self.en_cours:
+            return
         self.colorer_champs()
         if self.var_mgd.get():
             try:
@@ -512,12 +531,6 @@ class Application(tk.Tk):
                      "" if abs(e3) < TOLERANCE else "   (q3 n'agit pas sur P3)")),
             foreground=VERT if ok else ROUGE)
 
-    # =====================================================================
-    #  TRAJECTOIRE PAR POINTS DE POSITION : suivi geometrique par la MGI
-    #  Pas de temps ni de vitesse : chaque clic sur "Point suivant" envoie
-    #  P3 au point suivant avec la MGI. Le bras part toujours de sa pose
-    #  ACTUELLE : il ne revient jamais a la position 0.
-    # =====================================================================
     def lire_points(self):
         """Lit la zone de texte. Renvoie (points, numeros_de_ligne, message_erreur)."""
         pts, nums = [], []
@@ -555,6 +568,8 @@ class Application(tk.Tk):
         return True, ""
 
     def maj_apercu(self, dessiner=True):
+        if self.en_cours:
+            return
         """Relit les points quand on modifie le texte, et redessine le trajet prevu."""
         self.i_traj = 0
         self.txt_pts.tag_remove("atteint", "1.0", "end")
@@ -574,7 +589,9 @@ class Application(tk.Tk):
             self.rafraichir()
 
     def point_suivant(self):
-        """Envoie P3 au point suivant avec la MGI, sans repasser par la position 0."""
+        """Calcule les q cibles avec la MGI, puis lance le deplacement petit a petit."""
+        if self.en_cours:
+            return
         if not self.apercu_ok or not self.apercu:
             self.message("Trajectoire : corrigez d'abord la liste de points (voir le cadre).", ROUGE)
             return
@@ -583,36 +600,75 @@ class Application(tk.Tk):
             self.i_traj = 0
         i = self.i_traj
         x, y, z = pts[i]
-        q = MGI(x, y, z)
-        ok, msg = dans_butees(q[0], q[1], q[3])
+        q_cible = MGI(x, y, z)
+        ok, msg = dans_butees(q_cible[0], q_cible[1], q_cible[3])
         if not ok:
             self.message("Trajectoire : point %d hors espace de travail (%s)" % (i + 1, msg), ROUGE)
             return
-        self.q = q                    # la nouvelle pose remplace l'ancienne : pas de retour a zero
-        self.remplir_q()
-        self.remplir_p((x, y, z))
-        p = MGD(q[0], q[1], q[2], q[3])
-        self.trace.append((p[0], p[1], p[2]))
+        self.en_cours = True
+        self.deplacer_pas_a_pas(list(self.q), q_cible, 1, 10, i, x, y, z)
 
-        # ligne du point atteint surlignee dans la zone de texte
+    def deplacer_pas_a_pas(self, q_depart, q_arrivee, k, n, i, x, y, z):
+        """Un pas du deplacement : q avance de 1/n vers q_arrivee, puis on redessine."""
+        t = k / n
+        self.q = [q_depart[j] + t * (q_arrivee[j] - q_depart[j]) for j in range(4)]
+        self.remplir_q()
+        p = MGD(self.q[0], self.q[1], self.q[2], self.q[3])
+        self.remplir_p(p)
+        self.colorer_champs()
+        self.rafraichir()
+        if k < n:
+            self.after(30, lambda: self.deplacer_pas_a_pas(q_depart, q_arrivee, k + 1, n, i, x, y, z))
+        else:
+            self.terminer_deplacement(i, x, y, z)
+
+    def terminer_deplacement(self, i, x, y, z):
+        """Une fois les n pas effectues : mise a jour du texte et de la validation."""
+        pts = self.apercu
         self.txt_pts.tag_remove("atteint", "1.0", "end")
         ligne = self.num_lignes[i]
         self.txt_pts.tag_add("atteint", "%d.0" % ligne, "%d.end" % ligne)
-
-        # index du point suivant (si le trajet est ferme, on ne refait pas le point de depart)
         self.i_traj = i + 1
         fin = ""
         if self.i_traj >= len(pts):
             ferme = len(pts) > 1 and max(abs(pts[0][k] - pts[-1][k]) for k in range(3)) < 1e-9
             self.i_traj = 1 if ferme else 0
-            fin = "   (fin du tour : le prochain clic continue le trace)"
+            fin = "   (fin du tour : le prochain clic repart au debut)"
         self.message("Trajectoire : point %d/%d   P3 = (%.3f ; %.3f ; %.3f)   "
                      "q1 = %.1f   q2 = %.1f   q4 = %.3f%s"
-                     % (i + 1, len(pts), p[0], p[1], p[2],
-                        degrees(q[0]), degrees(q[1]), q[3], fin), BLEU)
-        self.colorer_champs()
-        self.rafraichir()
+                     % (i + 1, len(pts), x, y, z,
+                        degrees(self.q[0]), degrees(self.q[1]), self.q[3], fin), BLEU)
         self.afficher_validation()
+        self.en_cours = False
+
+        if self.auto:
+            self.compte_auto += 1
+            if self.compte_auto < self.total_auto:
+                self.after_id_auto = self.after(150, self.point_suivant)
+            else:
+                self.auto = False
+                self.message("Trajectoire complete : %d points parcourus." % self.total_auto, VERT)
+
+    def lancer_trajectoire(self):
+        """Lance tous les points de la liste, a la suite, en un seul clic."""
+        if self.en_cours or self.auto:
+            return
+        if not self.apercu_ok or not self.apercu:
+            self.message("Trajectoire : corrigez d'abord la liste de points (voir le cadre).", ROUGE)
+            return
+        self.auto = True
+        self.compte_auto = 0
+        self.total_auto = len(self.apercu)
+        self.point_suivant()
+
+    def stop_trajectoire(self):
+        """Arrete l'enchainement automatique. Le bras finit son pas en cours puis s'arrete."""
+        if self.after_id_auto is not None:
+            self.after_cancel(self.after_id_auto)
+            self.after_id_auto = None
+        if self.auto:
+            self.auto = False
+            self.message("Trajectoire arretee. Le bras reste ou il est.", "#b26a00")
 
     def repartir(self):
         """Le prochain clic ira au 1er point. Le bras ne bouge pas."""
@@ -620,12 +676,14 @@ class Application(tk.Tk):
         self.txt_pts.tag_remove("atteint", "1.0", "end")
         self.message("Le prochain clic ira au 1er point. Le bras reste ou il est.", "#777")
 
-    def effacer_trace(self):
-        """Efface le trace vert. Le bras ne bouge pas."""
-        self.trace = []
-        self.message("Trace effacee. Le bras reste a sa position actuelle.", "#777")
-        self.rafraichir()
 
+    def charger_points(self, texte):
+        """Remplace la liste de points par 'texte' (carre ou cercle), sans bouger le bras."""
+        if self.en_cours:
+            return
+        self.txt_pts.delete("1.0", "end")
+        self.txt_pts.insert("1.0", texte)
+        self.maj_apercu()
     # ---------------- dessin du robot ----------------
     def rafraichir(self):
         q1, q2, q3, q4 = self.q
@@ -717,19 +775,7 @@ class Application(tk.Tk):
         robot.set_clip_on(False)
         self.ax.add_collection3d(robot)
 
-        # trajectoire : carre prevu (pointille) et trace deja parcourue (trait plein)
-        if self.apercu:
-            ap = np.array(self.apercu)
-            col_ap = "#6a1b9a" if self.apercu_ok else "#c62828"
-            self.ax.plot(ap[:, 0], ap[:, 1], ap[:, 2], "--", color=col_ap, lw=1.4,
-                         zorder=6, clip_on=False)
-            self.ax.plot(ap[:, 0], ap[:, 1], ap[:, 2], "o", color=col_ap, mfc="white",
-                         ms=4, zorder=6, clip_on=False)
-        if self.trace:
-            tr = np.array(self.trace)
-            self.ax.plot(tr[:, 0], tr[:, 1], tr[:, 2], "-o", color="#00897b", lw=2.6,
-                         ms=5, zorder=7, clip_on=False)
-
+       
         haut = 0.55
         self.ax.set_xlim(-S, S)
         self.ax.set_ylim(-S, S)
