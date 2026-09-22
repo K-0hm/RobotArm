@@ -259,6 +259,7 @@ class Application(tk.Tk):
         self.apercu_ok = False       # True si tous les points sont atteignables
         self.num_lignes = []         # numero de ligne (zone de texte) de chaque point
         self.i_traj = 0              # prochain point a atteindre
+        self.trace = []              # points deja parcourus par P3 (trait vert)
         self.auto = False            # True pendant l'enchainement automatique
         self.compte_auto = 0
         self.total_auto = 0
@@ -388,6 +389,8 @@ class Application(tk.Tk):
             row=1, column=5, sticky="n", padx=(16, 6), pady=(2, 0))
         ttk.Button(traj, text="Stop", command=self.stop_trajectoire).grid(
             row=1, column=6, sticky="n", padx=6, pady=(2, 0))
+        ttk.Button(traj, text="Effacer la trace", command=self.effacer_trace).grid(
+            row=1, column=7, sticky="n", padx=(16, 6), pady=(2, 0))
         self.lbl_traj = ttk.Label(traj, text="", font=("TkDefaultFont", 10),
                                   wraplength=720, justify="left")
         self.lbl_traj.grid(row=2, column=1, columnspan=4, sticky="nw", padx=(16, 12), pady=(6, 6))
@@ -624,6 +627,7 @@ class Application(tk.Tk):
 
     def terminer_deplacement(self, i, x, y, z):
         """Une fois les n pas effectues : mise a jour du texte et de la validation."""
+        self.trace.append((x, y, z))
         pts = self.apercu
         self.txt_pts.tag_remove("atteint", "1.0", "end")
         ligne = self.num_lignes[i]
@@ -676,7 +680,12 @@ class Application(tk.Tk):
         self.txt_pts.tag_remove("atteint", "1.0", "end")
         self.message("Le prochain clic ira au 1er point. Le bras reste ou il est.", "#777")
 
-
+    def effacer_trace(self):
+        """Efface le trait vert. Le bras ne bouge pas."""
+        self.trace = []
+        self.message("Trace effacee. Le bras reste a sa position actuelle.", "#777")
+        self.rafraichir()
+    
     def charger_points(self, texte):
         """Remplace la liste de points par 'texte' (carre ou cercle), sans bouger le bras."""
         if self.en_cours:
@@ -775,7 +784,21 @@ class Application(tk.Tk):
         robot.set_clip_on(False)
         self.ax.add_collection3d(robot)
 
-       
+        # trace de la trajectoire prevue (carre, cercle...) sur l'espace de travail
+        if self.apercu:
+            pts = np.array(self.apercu)
+            couleur = "#6a1b9a" if self.apercu_ok else ROUGE
+            self.ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], "--", color=couleur, lw=1.6,
+                         zorder=6, clip_on=False)
+            self.ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], "o", color=couleur, mfc="white",
+                         mew=1.3, ms=5, zorder=6, clip_on=False)
+
+            self.ax.plot([-1.8, 1.8], [-1.8, 1.8], [0.5, 0.5], color="magenta", lw=8, zorder=99, clip_on=False)
+        # trace deja parcourue par le bras (trait vert plein)
+        if self.trace:
+            tr = np.array(self.trace)
+            self.ax.plot(tr[:, 0], tr[:, 1], tr[:, 2], "-o", color="#00897b", lw=2.6,
+                ms=5, zorder=7, clip_on=False)
         haut = 0.55
         self.ax.set_xlim(-S, S)
         self.ax.set_ylim(-S, S)
