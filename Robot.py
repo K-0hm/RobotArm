@@ -451,22 +451,34 @@ class Application(tk.Tk):
         self.txt_pts.insert("1.0", POINTS_DEFAUT)
         self.txt_pts.tag_configure("atteint", background="#c8e6c9")
         self.txt_pts.bind("<KeyRelease>", lambda ev: self.maj_apercu())
-        ttk.Button(traj, text="Point suivant", command=self.point_suivant).grid(
-            row=1, column=1, sticky="n", padx=(16, 6), pady=(2, 0))
-        ttk.Button(traj, text="Repartir du 1er point", command=self.repartir).grid(
-            row=1, column=2, sticky="n", padx=6, pady=(2, 0))
-        ttk.Button(traj, text="Carre", command=lambda: self.charger_points(POINTS_DEFAUT)).grid(
-            row=1, column=3, sticky="n", padx=6, pady=(2, 0))
-        ttk.Button(traj, text="Cercle", command=lambda: self.charger_points(POINTS_CERCLE)).grid(
-            row=1, column=4, sticky="n", padx=6, pady=(2, 0))
-        ttk.Button(traj, text="Lancer la trajectoire", command=self.lancer_trajectoire).grid(
-            row=1, column=5, sticky="n", padx=(16, 6), pady=(2, 0))
+                # --- menu deroulant : forme de la trajectoire
+        ttk.Label(traj, text="Trajectoire :", foreground=BLEU).grid(
+            row=1, column=1, sticky="w", padx=(16, 4), pady=(2, 0))
+        self.var_forme = tk.StringVar(value="Carre")
+        menu_forme = ttk.Combobox(traj, textvariable=self.var_forme,
+                                  values=["Carre", "Cercle"], state="readonly", width=9)
+        menu_forme.grid(row=1, column=2, padx=(0, 16), pady=(2, 0))
+        menu_forme.bind("<<ComboboxSelected>>", self.changer_forme)
+
+        # --- menu deroulant : mode de commande
+        ttk.Label(traj, text="Commande :", foreground=BLEU).grid(
+            row=1, column=3, sticky="w", padx=(0, 4), pady=(2, 0))
+        self.var_mode = tk.StringVar(value="Position")
+        menu_mode = ttk.Combobox(traj, textvariable=self.var_mode,
+                                 values=["Position", "Vitesse"], state="readonly", width=9)
+        menu_mode.grid(row=1, column=4, padx=(0, 16), pady=(2, 0))
+
+        # --- boutons d'execution (communs aux deux modes)
+        ttk.Button(traj, text="Lancer la trajectoire", command=self.lancer).grid(
+            row=1, column=5, sticky="n", padx=6, pady=(2, 0))
         ttk.Button(traj, text="Stop", command=self.stop_trajectoire).grid(
             row=1, column=6, sticky="n", padx=6, pady=(2, 0))
-        ttk.Button(traj, text="Commande en vitesse",command=self.lancer_commande).grid(
-            row=1, column=8, sticky="n", padx=6, pady=(2, 0))
+        self.btn_point_suivant = ttk.Button(traj, text="Point suivant", command=self.point_suivant)
+        self.btn_point_suivant.grid(row=1, column=7, sticky="n", padx=6, pady=(2, 0))
+        self.btn_repartir = ttk.Button(traj, text="Repartir du 1er point", command=self.repartir)
+        self.btn_repartir.grid(row=1, column=8, sticky="n", padx=6, pady=(2, 0))
         ttk.Button(traj, text="Effacer la trace", command=self.effacer_trace).grid(
-            row=1, column=7, sticky="n", padx=(16, 6), pady=(2, 0))
+            row=1, column=9, sticky="n", padx=(16, 6), pady=(2, 0))
         self.lbl_traj = ttk.Label(traj, text="", font=("TkDefaultFont", 10),
                                   wraplength=720, justify="left")
         self.lbl_traj.grid(row=2, column=1, columnspan=4, sticky="nw", padx=(16, 12), pady=(6, 6))
@@ -728,7 +740,17 @@ class Application(tk.Tk):
             else:
                 self.auto = False
                 self.message("Trajectoire complete : %d points parcourus." % self.total_auto, VERT)
+    
+    def changer_forme(self, event=None):
+        texte = POINTS_DEFAUT if self.var_forme.get() == "Carre" else POINTS_CERCLE
+        self.charger_points(texte)
 
+    def lancer(self):
+        """Aiguille vers le mode Position (MGI point a point) ou Vitesse (commande cinematique)."""
+        if self.var_mode.get() == "Position":
+            self.lancer_trajectoire()
+        else:
+            self.lancer_commande()
     def lancer_trajectoire(self):
         """Lance tous les points de la liste, a la suite, en un seul clic."""
         if self.en_cours or self.auto:
