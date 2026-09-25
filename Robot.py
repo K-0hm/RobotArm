@@ -340,6 +340,14 @@ class Application(tk.Tk):
         self.compte_auto = 0
         self.total_auto = 0
         self.after_id_auto = None
+        self.hist_temps  = []
+        self.hist_erreur = []
+        self.hist_vit_d  = []
+        self.hist_vit_r  = []
+        self.win_graph = None
+        self.ax_err = None
+        self.ax_vit = None
+        self.canvas_graph = None
         # commande en vitesse
         self.qdot = [0.0, 0.0, 0.0, 0.0]
         self.k_cmd = 0
@@ -797,7 +805,38 @@ class Application(tk.Tk):
         self.txt_pts.delete("1.0", "end")
         self.txt_pts.insert("1.0", texte)
         self.maj_apercu()
+    def ouvrir_graphe(self):
+        """Cree (ou reutilise) la fenetre des courbes erreur/vitesse."""
+        if self.win_graph is None or not self.win_graph.winfo_exists():
+            self.win_graph = tk.Toplevel(self)
+            self.win_graph.title("Suivi de vitesse et d'erreur")
+            self.win_graph.geometry("650x500")
+            fig = Figure(figsize=(6, 4.5), facecolor="white")
+            self.ax_err = fig.add_subplot(211)
+            self.ax_vit = fig.add_subplot(212)
+            self.canvas_graph = FigureCanvasTkAgg(fig, master=self.win_graph)
+            self.canvas_graph.get_tk_widget().pack(fill="both", expand=True)
+        self._dessiner_graphe()
 
+    def _dessiner_graphe(self):
+        self.ax_err.clear()
+        self.ax_err.plot(self.hist_temps, self.hist_erreur, color=ROUGE, lw=1.5)
+        self.ax_err.set_ylabel("erreur |Pd - Pr|  (m)")
+        self.ax_err.set_title("Erreur de position")
+        self.ax_err.grid(True, alpha=0.3)
+
+        self.ax_vit.clear()
+        self.ax_vit.plot(self.hist_temps, self.hist_vit_d, "--", color=BLEU,
+                         lw=1.3, label="vitesse desiree")
+        self.ax_vit.plot(self.hist_temps, self.hist_vit_r, "-", color=VERT,
+                         lw=1.5, label="vitesse reelle")
+        self.ax_vit.set_xlabel("temps (s)")
+        self.ax_vit.set_ylabel("|Pdot|  (m/s)")
+        self.ax_vit.set_title("Suivi de vitesse")
+        self.ax_vit.legend(loc="upper right", fontsize=8)
+        self.ax_vit.grid(True, alpha=0.3)
+
+        self.canvas_graph.draw_idle()
     def lancer_commande(self):
         if self.en_cours or self.auto:
             return
@@ -811,6 +850,11 @@ class Application(tk.Tk):
         self.k_cmd = 0
         self.trace = []
         self.q = MGI(*self.traj_pos[0])
+        self.hist_temps  = []
+        self.hist_erreur = []
+        self.hist_vit_d  = []
+        self.hist_vit_r  = []
+        self.ouvrir_graphe()
         self.pas_commande(dt, 15.0, n_sub=5)
 
     def pas_commande(self, dt, Kp, n_sub=5):
@@ -842,7 +886,12 @@ class Application(tk.Tk):
                     % (self.k_cmd+1, len(self.traj_pos),
                         qdot_c[0], qdot_c[1], qdot_c[2], qdot_c[3],
                         np.linalg.norm(Pdot), np.linalg.norm(err)), BLEU)
-
+        self.hist_temps.append(self.k_cmd * dt)
+        self.hist_erreur.append(np.linalg.norm(err))
+        self.hist_vit_d.append(np.linalg.norm(Pdot_d))
+        self.hist_vit_r.append(np.linalg.norm(Pdot))
+        if self.win_graph is not None and self.win_graph.winfo_exists():
+            self._dessiner_graphe()
         self.k_cmd += 1
         self.after_id_cmd = self.after(int(dt*1000), lambda: self.pas_commande(dt, Kp, n_sub))
 
