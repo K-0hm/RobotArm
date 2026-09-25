@@ -42,10 +42,16 @@ def MGI(x, y, z):
 def deriver_trajectoire(pts, dt):
     """Vitesse desiree Pdot le long de la trajectoire (differences finies)."""
     P = np.array(pts, float)
+    n = len(P)
+    ferme = n > 2 and np.allclose(P[0], P[-1], atol=1e-9)
     V = np.zeros_like(P)
     V[1:-1] = (P[2:] - P[:-2]) / (2*dt)      # differences centrees
-    V[0]    = (P[1] - P[0]) / dt
-    V[-1]   = (P[-1] - P[-2]) / dt
+    if ferme:
+        V[0]  = (P[1] - P[-2]) / (2*dt)
+        V[-1] = V[0]
+    else:
+        V[0]  = (P[1] - P[0]) / dt
+        V[-1] = (P[-1] - P[-2]) / dt
     return V
 
 def jacobienne(q1, q2, q3, q4):
@@ -286,7 +292,7 @@ def _carre(n_cote=20, cx=0.0, cy=-1.45, cz=0.25, cote=0.40):
     lignes.append("%6.3f  %6.3f  %6.3f" % (coins[0][0], cy, coins[0][1]))
     return "\n".join(lignes) + "\n"
 
-POINTS_DEFAUT = _carre(n_cote=5)
+POINTS_DEFAUT = _carre(n_cote= 5)
 
 # points de position du cercle (X  Y  Z), un par ligne : modifiables dans l'interface
 POINTS_CERCLE = "\n".join(
@@ -776,27 +782,30 @@ class Application(tk.Tk):
         if not self.apercu_ok or not self.apercu:
             self.message("Corrigez d'abord la liste de points.", ROUGE)
             return
-        dt = 0.05
+        # pour changer vitesse 
+        dt = 0.02
         self.traj_pos = self.apercu
         self.traj_vit = deriver_trajectoire(self.apercu, dt)
         self.k_cmd = 0
         self.trace = []
         self.q = MGI(*self.traj_pos[0])
-        self.pas_commande(dt, 5.0)
+        self.pas_commande(dt, 15.0, n_sub=5)
 
-    def pas_commande(self, dt, Kp):
-        """Un pas : controleur -> qdot -> integration q = q + qdot*dt."""
+    def pas_commande(self, dt, Kp, n_sub=5):
+        """Un pas affiche = n_sub sous-pas d'integration (plus precis, meme vitesse visible)."""
         if self.k_cmd >= len(self.traj_pos):
             self.message("Commande terminee. Vitesses non nulles aux points "
-                         "de passage : mouvement continu.", VERT)
+                        "de passage : mouvement continu.", VERT)
             return
 
         Pd     = self.traj_pos[self.k_cmd]
         Pdot_d = self.traj_vit[self.k_cmd]
+        dts = dt / n_sub
 
-        qdot_c, err = controleur(self.q, Pd, Pdot_d, Kp)
+        for _ in range(n_sub):
+            qdot_c, err = controleur(self.q, Pd, Pdot_d, Kp)
+            self.q = [self.q[j] + qdot_c[j]*dts for j in range(4)]
 
-        self.q = [self.q[j] + qdot_c[j]*dt for j in range(4)]
         self.qdot = qdot_c
 
         p = MGD(*self.q)
@@ -807,13 +816,13 @@ class Application(tk.Tk):
 
         Pdot = MCD(self.q[0], self.q[1], self.q[2], self.q[3], qdot_c)
         self.message("Commande %d/%d   qdot = [%.3f  %.3f  %.3f  %.3f]   "
-                     "|Pdot| = %.3f m/s   erreur = %.4f m"
-                     % (self.k_cmd+1, len(self.traj_pos),
+                    "|Pdot| = %.3f m/s   erreur = %.4f m"
+                    % (self.k_cmd+1, len(self.traj_pos),
                         qdot_c[0], qdot_c[1], qdot_c[2], qdot_c[3],
                         np.linalg.norm(Pdot), np.linalg.norm(err)), BLEU)
 
         self.k_cmd += 1
-        self.after_id_cmd = self.after(int(dt*1000),lambda: self.pas_commande(dt, Kp))
+        self.after_id_cmd = self.after(int(dt*1000), lambda: self.pas_commande(dt, Kp, n_sub))
 
     # ---------------- dessin du robot ----------------
     def rafraichir(self):
@@ -936,8 +945,8 @@ if __name__ == "__main__":
     # --- tests en console (decommenter au besoin)
     # verification(0.5, 0.7, 0, 0.2)
     # balayage(0.3)
-    q = [0.5, 0.7, 0, 0.2]
-    print("Pdot =", MCD(*q, [0.1, 0.0, 0.0, 0.0]))
-    print("qdot =", MCI(*q, [0.05, 0.0, 0.0]))
+    #q = [0.5, 0.7, 0, 0.2]
+    #print("Pdot =", MCD(*q, [0.1, 0.0, 0.0, 0.0]))
+    #print("qdot =", MCI(*q, [0.05, 0.0, 0.0]))
     # --- lancement de l'interface
     Application().mainloop()
