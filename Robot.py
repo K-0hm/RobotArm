@@ -487,12 +487,8 @@ class Application(tk.Tk):
             row=1, column=5, sticky="n", padx=6, pady=(2, 0))
         ttk.Button(traj, text="Stop", command=self.stop_trajectoire).grid(
             row=1, column=6, sticky="n", padx=6, pady=(2, 0))
-        self.btn_point_suivant = ttk.Button(traj, text="Point suivant", command=self.point_suivant)
-        self.btn_point_suivant.grid(row=1, column=7, sticky="n", padx=6, pady=(2, 0))
-        self.btn_repartir = ttk.Button(traj, text="Repartir du 1er point", command=self.repartir)
-        self.btn_repartir.grid(row=1, column=8, sticky="n", padx=6, pady=(2, 0))
         ttk.Button(traj, text="Effacer la trace", command=self.effacer_trace).grid(
-            row=1, column=9, sticky="n", padx=(16, 6), pady=(2, 0))
+            row=1, column=7, sticky="n", padx=(16, 6), pady=(2, 0))
         self.lbl_traj = ttk.Label(traj, text="", font=("TkDefaultFont", 10),
                                   wraplength=720, justify="left")
         self.lbl_traj.grid(row=2, column=1, columnspan=4, sticky="nw", padx=(16, 12), pady=(6, 6))
@@ -687,7 +683,7 @@ class Application(tk.Tk):
             self.apercu_ok, msg = self.verifier_points(pts, nums)
             if self.apercu_ok:
                 self.lbl_traj.config(text="%d points, tous atteignables. "
-                                     "Cliquez sur \"Point suivant\"." % len(pts), foreground=VERT)
+                 "Cliquez sur \"Lancer la trajectoire\"." % len(pts), foreground=VERT)
             else:
                 self.lbl_traj.config(text=msg, foreground=ROUGE)
         if dessiner:
@@ -739,7 +735,7 @@ class Application(tk.Tk):
         if self.i_traj >= len(pts):
             ferme = len(pts) > 1 and max(abs(pts[0][k] - pts[-1][k]) for k in range(3)) < 1e-9
             self.i_traj = 1 if ferme else 0
-            fin = "   (fin du tour : le prochain clic repart au debut)"
+            fin = "   (fin du tour)"
         self.message("Trajectoire : point %d/%d   P3 = (%.3f ; %.3f ; %.3f)   "
                      "q1 = %.1f   q2 = %.1f   q4 = %.3f%s"
                      % (i + 1, len(pts), x, y, z,
@@ -775,22 +771,20 @@ class Application(tk.Tk):
         self.auto = True
         self.compte_auto = 0
         self.total_auto = len(self.apercu)
+        self.i_traj = 0
         self.point_suivant()
 
     def stop_trajectoire(self):
         """Arrete l'enchainement automatique. Le bras finit son pas en cours puis s'arrete."""
+        if self.after_id_cmd is not None:
+            self.after_cancel(self.after_id_cmd)
+            self.after_id_cmd = None
         if self.after_id_auto is not None:
             self.after_cancel(self.after_id_auto)
             self.after_id_auto = None
         if self.auto:
             self.auto = False
             self.message("Trajectoire arretee. Le bras reste ou il est.", "#b26a00")
-
-    def repartir(self):
-        """Le prochain clic ira au 1er point. Le bras ne bouge pas."""
-        self.i_traj = 0
-        self.txt_pts.tag_remove("atteint", "1.0", "end")
-        self.message("Le prochain clic ira au 1er point. Le bras reste ou il est.", "#777")
 
     def effacer_trace(self):
         """Efface le trait vert. Le bras ne bouge pas."""
