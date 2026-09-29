@@ -352,6 +352,7 @@ class Application(tk.Tk):
         self.var_mgd = tk.BooleanVar(value=True)
         self.var_mgi = tk.BooleanVar(value=False)
         self.var_val = tk.BooleanVar(value=False)
+        self.var_val_mci = tk.BooleanVar(value=False)
 
         # trajectoire : liste de points de position (X, Y, Z) suivis par la MGI
         self.apercu = None           # points lus dans la zone de texte
@@ -472,6 +473,8 @@ class Application(tk.Tk):
                         command=self.clic_mgi).pack(anchor="w", pady=8)
         ttk.Checkbutton(cadre_c, text="Validation MGI", variable=self.var_val,
                         command=self.clic_val).pack(anchor="w", pady=8)
+        ttk.Checkbutton(cadre_c, text="Validation MCI", variable=self.var_val_mci,
+                        command=self.clic_val_mci).pack(anchor="w", pady=8)
 
         # --- trajectoire : points de position saisis en coordonnees X  Y  Z
         traj = ttk.Labelframe(self, text=" Trajectoire : points de position suivis par la MGI ",
@@ -540,6 +543,8 @@ class Application(tk.Tk):
         self.lbl_matrice = tk.Label(bas, text="", font=("TkFixedFont", 10),
                 justify="left", bg=BG, anchor="w")
         self.lbl_matrice.pack(anchor="w", padx=10, pady=(4, 6))
+        self.lbl_mci = ttk.Label(bas, text="", font=("TkDefaultFont", 10))
+        self.lbl_mci.pack(anchor="w", padx=10, pady=(2, 0))      
         ttk.Label(bas, foreground="#777",
                   text=("Butees :  q1 [-180 ; 180] deg    q2 [0 ; 135] deg    "
                         "q3 libre    q4 [0 ; 0.350] m        a = %.3f   b = %.3f"
@@ -551,11 +556,6 @@ class Application(tk.Tk):
             self.var_mgi.set(False)
         self.maj_etats()
         self.calculer()
-        self.colorer_champs()
-        self.rafraichir()
-        self.afficher_validation()
-        self.afficher_comparaison_dh()
-        self.afficher_matrice_dh()
 
     def clic_mgi(self):
         if self.var_mgi.get():
@@ -565,6 +565,9 @@ class Application(tk.Tk):
 
     def clic_val(self):
         self.afficher_validation()
+
+    def clic_val_mci(self):
+        self.afficher_validation_mci()
 
     def maj_etats(self):
         """MGD coche : on saisit q.  MGI coche : on saisit X, Y, Z."""
@@ -658,6 +661,7 @@ class Application(tk.Tk):
         self.afficher_validation()
         self.afficher_comparaison_dh()
         self.afficher_matrice_dh()
+        self.afficher_validation_mci()
 
     def afficher_validation(self):
         """Validation du MGI : q -> MGD -> MGI -> comparaison avec q."""
@@ -703,6 +707,33 @@ class Application(tk.Tk):
         lignes.append("   -> 4e colonne = position P3 = (%.4f ; %.4f ; %.4f)"
                        % (T04[0, 3], T04[1, 3], T04[2, 3]))
         self.lbl_matrice.config(text="\n".join(lignes))
+
+    def afficher_validation_mci(self):
+        """Validation MCI :  Pdot_d (vitesse test) -> qdot_c (MCI) -> Pdot_recalcule (MCD)
+        -> comparaison avec Pdot_d.  (meme logique que Validation MGI, mais sur les vitesses)"""
+        if not self.var_val_mci.get():
+            self.lbl_mci.config(text="")
+            return
+        q1, q2, q3, q4 = self.q
+        Pdot_d = [0.10, 0.05, -0.05]     # vitesse cartesienne test (m/s), fixe
+        qdot_c = MCI(q1, q2, q3, q4, Pdot_d)
+        Pdot_r = MCD(q1, q2, q3, q4, qdot_c)
+        ecart = max(abs(Pdot_r[i] - Pdot_d[i]) for i in range(3))
+        print("=== Validation MCI ===")
+        print("Pdot_d          =", Pdot_d)
+        print("qdot_c (MCI)    =", qdot_c)
+        print("Pdot_recalcule (MCD) =", Pdot_r)
+        print("ecart = %.2e   -> %s" % (ecart, "OK" if ecart < 1e-9 else "ECART"))
+        print()
+
+        self.lbl_mci.config(
+            text=("Validation MCI :  Pdot_d = (%.3f ; %.3f ; %.3f)   "
+                  "qdot_c = [%.3f  %.3f  %.3f  %.3f]   "
+                  "Pdot_recalcule = (%.3f ; %.3f ; %.3f)   ecart = %.2e"
+                  % (Pdot_d[0], Pdot_d[1], Pdot_d[2],
+                     qdot_c[0], qdot_c[1], qdot_c[2], qdot_c[3],
+                     Pdot_r[0], Pdot_r[1], Pdot_r[2], ecart)),
+            foreground=VERT if ecart < 1e-9 else ROUGE)
 
     def lire_points(self):
         """Lit la zone de texte. Renvoie (points, numeros_de_ligne, message_erreur)."""
