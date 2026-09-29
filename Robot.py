@@ -352,6 +352,7 @@ class Application(tk.Tk):
         self.qdot = [0.0, 0.0, 0.0, 0.0]
         self.k_cmd = 0
         self.after_id_cmd = None
+        self.facteur_vitesse = tk.DoubleVar(value=1.0)   # x1.0 = vitesse nominale
 
         self._styles()
         self._construire()
@@ -482,13 +483,23 @@ class Application(tk.Tk):
                                  values=["Position", "Vitesse"], state="readonly", width=9)
         menu_mode.grid(row=1, column=4, padx=(0, 16), pady=(2, 0))
 
+        # --- reglette : facteur de vitesse en direct
+        ttk.Label(traj, text="Vitesse :", foreground=BLEU).grid(
+            row=1, column=5, sticky="w", padx=(16, 4), pady=(2, 0))
+        reglette = ttk.Scale(traj, from_=0.1, to=3.0, orient="horizontal",
+                             variable=self.facteur_vitesse, length=140)
+        reglette.grid(row=1, column=6, padx=(0, 4), pady=(2, 0))
+        self.lbl_vitesse = ttk.Label(traj, text="x1.00", foreground="#777", width=6)
+        self.lbl_vitesse.grid(row=1, column=7, sticky="w", pady=(2, 0))
+        reglette.configure(command=lambda v: self.lbl_vitesse.config(text="x%.2f" % float(v)))
+
         # --- boutons d'execution (communs aux deux modes)
         ttk.Button(traj, text="Lancer la trajectoire", command=self.lancer).grid(
-            row=1, column=5, sticky="n", padx=6, pady=(2, 0))
+            row=1, column=8, sticky="n", padx=6, pady=(2, 0))
         ttk.Button(traj, text="Stop", command=self.stop_trajectoire).grid(
-            row=1, column=6, sticky="n", padx=6, pady=(2, 0))
+            row=1, column=9, sticky="n", padx=6, pady=(2, 0))
         ttk.Button(traj, text="Effacer la trace", command=self.effacer_trace).grid(
-            row=1, column=7, sticky="n", padx=(16, 6), pady=(2, 0))
+            row=1, column=10, sticky="n", padx=(16, 6), pady=(2, 0))
         self.lbl_traj = ttk.Label(traj, text="", font=("TkDefaultFont", 10),
                                   wraplength=720, justify="left")
         self.lbl_traj.grid(row=2, column=1, columnspan=4, sticky="nw", padx=(16, 12), pady=(6, 6))
@@ -719,7 +730,8 @@ class Application(tk.Tk):
         self.colorer_champs()
         self.rafraichir()
         if k < n:
-            self.after(30, lambda: self.deplacer_pas_a_pas(q_depart, q_arrivee, k + 1, n, i, x, y, z))
+            delai = max(1, int(30 / self.facteur_vitesse.get()))
+            self.after(delai, lambda: self.deplacer_pas_a_pas(q_depart, q_arrivee, k + 1, n, i, x, y, z))
         else:
             self.terminer_deplacement(i, x, y, z)
 
@@ -746,7 +758,8 @@ class Application(tk.Tk):
         if self.auto:
             self.compte_auto += 1
             if self.compte_auto < self.total_auto:
-                self.after_id_auto = self.after(150, self.point_suivant)
+                delai = max(1, int(150 / self.facteur_vitesse.get()))
+                self.after_id_auto = self.after(delai, self.point_suivant)
             else:
                 self.auto = False
                 self.message("Trajectoire complete : %d points parcourus." % self.total_auto, VERT)
@@ -842,6 +855,7 @@ class Application(tk.Tk):
         self.traj_pos = self.apercu
         self.traj_vit = deriver_trajectoire(self.apercu, dt)
         self.k_cmd = 0
+        self.temps_ecoule = 0.0
         self.trace = []
         self.q = MGI(*self.traj_pos[0])
         self.hist_temps  = []
@@ -858,9 +872,11 @@ class Application(tk.Tk):
                         "de passage : mouvement continu.", VERT)
             return
 
+        facteur = self.facteur_vitesse.get()
+
         Pd     = self.traj_pos[self.k_cmd]
-        Pdot_d = self.traj_vit[self.k_cmd]
-        dts = dt / n_sub
+        Pdot_d = np.array(self.traj_vit[self.k_cmd]) * facteur   # vitesse reparametree
+        dts = (dt / n_sub) / facteur                              # pas d'integration reel
 
         for _ in range(n_sub):
             qdot_c, err = controleur(self.q, Pd, Pdot_d, Kp)
@@ -880,14 +896,18 @@ class Application(tk.Tk):
                     % (self.k_cmd+1, len(self.traj_pos),
                         qdot_c[0], qdot_c[1], qdot_c[2], qdot_c[3],
                         np.linalg.norm(Pdot), np.linalg.norm(err)), BLEU)
-        self.hist_temps.append(self.k_cmd * dt)
+                        
+        self.temps_ecoule += dt / facteur
+        self.hist_temps.append(self.temps_ecoule)  # axe temps reel
+
         self.hist_erreur.append(np.linalg.norm(err))
         self.hist_vit_d.append(np.linalg.norm(Pdot_d))
         self.hist_vit_r.append(np.linalg.norm(Pdot))
         if self.win_graph is not None and self.win_graph.winfo_exists():
             self._dessiner_graphe()
         self.k_cmd += 1
-        self.after_id_cmd = self.after(int(dt*1000), lambda: self.pas_commande(dt, Kp, n_sub))
+        delai = max(1, int(dt*1000 / facteur))
+        self.after_id_cmd = self.after(delai, lambda: self.pas_commande(dt, Kp, n_sub))
 
     # ---------------- dessin du robot ----------------
     def rafraichir(self):
