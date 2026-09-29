@@ -27,6 +27,31 @@ def MGD(q1, q2, q3, q4):
     z =  (q4+b)*cos(q2)
     return [x, y, z]
 
+def matrice_dh(theta, d, a_dh, alpha):
+    """Matrice de transformation homogene 4x4, convention DH standard."""
+    ct, st = cos(theta), sin(theta)
+    ca, sa = cos(alpha), sin(alpha)
+    return np.array([
+        [ct, -st*ca,  st*sa, a_dh*ct],
+        [st,  ct*ca, -ct*sa, a_dh*st],
+        [0,      sa,     ca,       d],
+        [0,       0,      0,       1]
+    ])
+
+
+def MGD_matriciel(q1, q2, q3, q4, retourner_T04=False):
+    """Modele geometrique direct par la methode matricielle (Denavit-Hartenberg)"""
+    T01 = matrice_dh(q1 - pi/2, 0, a, pi/2)
+    T12 = matrice_dh(-q2,       0, 0, -pi/2)
+    T23 = matrice_dh(0,        q4, 0, 0)
+    T34 = matrice_dh(q3,        b, 0, 0)
+
+    T04 = T01 @ T12 @ T23 @ T34
+    if retourner_T04:
+        return T04
+    x, y, z = T04[0, 3], T04[1, 3], T04[2, 3]
+    return [x, y, z]
+
 
 def MGI(x, y, z):
     R = sqrt(x*x + y*y)
@@ -316,7 +341,6 @@ class Application(tk.Tk):
         self.geometry("1320x830")
         self.minsize(1000, 700)
         self.configure(bg=BG)
-
         # etat courant du robot
         self.q = [radians(30), radians(60), 0.0, 0.350]
 
@@ -500,6 +524,11 @@ class Application(tk.Tk):
         self.lbl_msg.pack(anchor="w", padx=10, pady=(6, 0))
         self.lbl_val = ttk.Label(bas, text="", font=("TkDefaultFont", 10))
         self.lbl_val.pack(anchor="w", padx=10, pady=(2, 0))
+        self.lbl_dh = ttk.Label(bas, text="", font=("TkDefaultFont", 10))
+        self.lbl_dh.pack(anchor="w", padx=10, pady=(2, 0))
+        self.lbl_matrice = tk.Label(bas, text="", font=("TkFixedFont", 10),
+                justify="left", bg=BG, anchor="w")
+        self.lbl_matrice.pack(anchor="w", padx=10, pady=(4, 6))
         ttk.Label(bas, foreground="#777",
                   text=("Butees :  q1 [-180 ; 180] deg    q2 [0 ; 135] deg    "
                         "q3 libre    q4 [0 ; 0.350] m        a = %.3f   b = %.3f"
@@ -511,6 +540,11 @@ class Application(tk.Tk):
             self.var_mgi.set(False)
         self.maj_etats()
         self.calculer()
+        self.colorer_champs()
+        self.rafraichir()
+        self.afficher_validation()
+        self.afficher_comparaison_dh()
+        self.afficher_matrice_dh()
 
     def clic_mgi(self):
         if self.var_mgi.get():
@@ -611,6 +645,8 @@ class Application(tk.Tk):
         self.colorer_champs()
         self.rafraichir()
         self.afficher_validation()
+        self.afficher_comparaison_dh()
+        self.afficher_matrice_dh()
 
     def afficher_validation(self):
         """Validation du MGI : q -> MGD -> MGI -> comparaison avec q."""
@@ -631,6 +667,31 @@ class Application(tk.Tk):
                   % (e1, e2, e3, e4, "OK" if ok else "ECART",
                      "" if abs(e3) < TOLERANCE else "   (q3 n'agit pas sur P3)")),
             foreground=VERT if ok else ROUGE)
+
+    def afficher_comparaison_dh(self):
+        """Compare MGD (vectoriel) et MGD_matriciel (Denavit-Hartenberg)."""
+        q1, q2, q3, q4 = self.q
+        p_vect = MGD(q1, q2, q3, q4)
+        p_mat  = MGD_matriciel(q1, q2, q3, q4)
+        ecart = max(abs(p_vect[i] - p_mat[i]) for i in range(3))
+        self.lbl_dh.config(
+            text=("MGD vectoriel  = (%.4f ; %.4f ; %.4f)     "
+                  "MGD matriciel = (%.4f ; %.4f ; %.4f)     ecart = %.2e"
+                  % (p_vect[0], p_vect[1], p_vect[2],
+                     p_mat[0], p_mat[1], p_mat[2], ecart)),
+            foreground=VERT if ecart < 1e-9 else ROUGE)
+            
+    def afficher_matrice_dh(self):
+        """Affiche la matrice T04 complete (methode matricielle)"""
+        q1, q2, q3, q4 = self.q
+        T04 = MGD_matriciel(q1, q2, q3, q4, retourner_T04=True)
+        lignes = ["T04  =  (methode matricielle DH)"]
+        for i in range(4):
+            ligne = "  ".join("%8.4f" % T04[i, j] for j in range(4))
+            lignes.append("   [ " + ligne + " ]")
+        lignes.append("   -> 4e colonne = position P3 = (%.4f ; %.4f ; %.4f)"
+                       % (T04[0, 3], T04[1, 3], T04[2, 3]))
+        self.lbl_matrice.config(text="\n".join(lignes))
 
     def lire_points(self):
         """Lit la zone de texte. Renvoie (points, numeros_de_ligne, message_erreur)."""
