@@ -6,6 +6,7 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk
 
+
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
@@ -14,6 +15,7 @@ from matplotlib.colors import to_rgb
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 
+import matplotlib.pyplot as plt
 
 # setup
 PI = 3.14159265358979323846
@@ -141,19 +143,23 @@ def verification(q1, q2, q3, q4):
     print("e1=%f  e2=%f  e3=%f  e4=%f" % (e1, e2, e3, e4))
 
 
-def balayage(inc):
+def balayage(inc, afficher=True):
     # determination de l'espace de travail du robot
+    points=[]
     q1 = PI
     while q1 > -PI:
         q2 = 0
         while q2 <= PI*0.75:      # 0.75*PI = 3PI/4
             q4 = 0
             while q4 < 0.350:
-                pointy = MGD(q1, q2, 0, q4)
-                print("x=%f,y=%f,z=%f" % (pointy[0], pointy[1], pointy[2]))
+                #pointy = MGD(q1, q2, 0, q4) #old relics?
+                points.append(MGD(q1, q2, 0, q4))
                 q4 += 0.005
             q2 += inc
         q1 -= inc
+    points = np.array(points)
+
+    return points
 
 
 # =============================================================================
@@ -352,6 +358,8 @@ class Application(tk.Tk):
         self.var_mgd = tk.BooleanVar(value=True)
         self.var_mgi = tk.BooleanVar(value=False)
         self.var_val = tk.BooleanVar(value=False)
+        self.var_espace = tk.BooleanVar(value=False)
+        self.points_travail = None    # cache, calcule a la demande
 
         # trajectoire : liste de points de position (X, Y, Z) suivis par la MGI
         self.apercu = None           # points lus dans la zone de texte
@@ -384,6 +392,7 @@ class Application(tk.Tk):
         self.remplir_q()
         self.maj_apercu(dessiner=False)
         self.calculer()
+
 
     # ---------------- styles ----------------
     def _styles(self):
@@ -472,6 +481,8 @@ class Application(tk.Tk):
                         command=self.clic_mgi).pack(anchor="w", pady=8)
         ttk.Checkbutton(cadre_c, text="Validation MGI", variable=self.var_val,
                         command=self.clic_val).pack(anchor="w", pady=8)
+        ttk.Checkbutton(cadre_c, text="Espace de travail", variable=self.var_espace,
+                        command=self.rafraichir).pack(anchor="w", pady=8)
 
         # --- trajectoire : points de position saisis en coordonnees X  Y  Z
         traj = ttk.Labelframe(self, text=" Trajectoire : points de position suivis par la MGI ",
@@ -1061,6 +1072,13 @@ class Application(tk.Tk):
         robot.set_clip_on(False)
         self.ax.add_collection3d(robot)
 
+                # nuage de points : espace de travail atteignable (optionnel, mis en cache)
+        if self.var_espace.get():
+            if self.points_travail is None:
+                self.points_travail = balayage(0.15)   # calcule une seule fois
+            pts = self.points_travail
+            self.ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],s=1, c=pts[:, 2], cmap="viridis", alpha=0.15,zorder=2)
+
         # trace de la trajectoire prevue (carre, cercle...) sur l'espace de travail
         if self.apercu:
             pts = np.array(self.apercu)
@@ -1090,7 +1108,7 @@ if __name__ == "__main__":
 
     # --- tests en console (decommenter au besoin)
     # verification(0.5, 0.7, 0, 0.2)
-    # balayage(0.3)
+    balayage(0.3, True)
     #q = [0.5, 0.7, 0, 0.2]
     #print("Pdot =", MCD(*q, [0.1, 0.0, 0.0, 0.0]))
     #print("qdot =", MCI(*q, [0.05, 0.0, 0.0]))
