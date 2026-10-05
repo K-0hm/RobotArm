@@ -6,7 +6,10 @@ Le projet comprend
 -  modèles géometriques directs et indirects 
 - une vérifiaction de la consistence du modèle(MGI*MCD=Id)
 - interface homme-machine.
-### A venir
 - trajectoire (position) en cours
 - cinématique
+
+### A venir
+- Gestion des Robots
+- Robot ABB
 
