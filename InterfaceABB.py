@@ -887,7 +887,7 @@ class Application(tk.Tk):
         self.trace = []
         self.hist_temps, self.hist_erreur, self.hist_vit_d, self.hist_vit_r = [], [], [], []
         self.ouvrir_graphe()
-        self.pas_commande(0.02, 15.0, n_sub=5)
+        self.pas_commande(0.02, 40.0, n_sub=5)
 
     def pas_commande(self, dt, Kp, n_sub=5):
         """Un pas affiche = n_sub sous-pas d'integration ; le temps simule avance de dt."""
@@ -903,7 +903,7 @@ class Application(tk.Tk):
             Pd, Pdot_d = tr.eval(min(self.t_sim + j * dts, tr.T))
             Pdot_d = np.array(Pdot_d) * facteur # affecte le changement de vitesse sur le graphe
             qdot_c, _ = controleur(self.q, Pd, Pdot_d, Kp)
-            self.q = list(np.clip(np.array(self.q) + qdot_c * dts, Q_MIN, Q_MAX))
+            self.q = list(np.clip(np.array(self.q) + qdot_c * (dt / n_sub), Q_MIN, Q_MAX))
         self.t_sim += dt * facteur
         self.qdot = qdot_c
 
