@@ -890,19 +890,21 @@ class Application(tk.Tk):
         self.pas_commande(0.02, 15.0, n_sub=5)
 
     def pas_commande(self, dt, Kp, n_sub=5):
-        """Un pas affiche = n_sub sous-pas d'integration ; le temps simule avance de dt.
-        La reglette Vitesse ne change que la vitesse d'affichage, pas la trajectoire."""
+        """Un pas affiche = n_sub sous-pas d'integration ; le temps simule avance de dt."""
         tr = self.traj_t
         if self.t_sim > tr.T + 1e-9:
             self.message("Commande terminee : tour fait en %.1f s   erreur max = %.2f mm"
                          % (tr.T, 1000 * max(self.hist_erreur)), VERT)
             return
-        dts = dt / n_sub
+        
+        facteur = self.facteur_vitesse.get()
+        dts = (dt / n_sub) * facteur
         for j in range(n_sub):
             Pd, Pdot_d = tr.eval(min(self.t_sim + j * dts, tr.T))
+            Pdot_d = np.array(Pdot_d) * facteur # affecte le changement de vitesse sur le graphe
             qdot_c, _ = controleur(self.q, Pd, Pdot_d, Kp)
             self.q = list(np.clip(np.array(self.q) + qdot_c * dts, Q_MIN, Q_MAX))
-        self.t_sim += dt
+        self.t_sim += dt * facteur
         self.qdot = qdot_c
 
         T = MGD_matriciel(self.q, retourner_T06=True)
@@ -913,6 +915,7 @@ class Application(tk.Tk):
         self.rafraichir()
 
         Pd, Pdot_d = tr.eval(min(self.t_sim, tr.T))
+        Pdot_d = np.array(Pdot_d) * facteur  # Vitesse desiree ajustee au facteur
         err = np.array(Pd) - p
         Pdot = MCD(self.q, qdot_c)[:3]
         trop = [str(i + 1) for i in range(6) if abs(qdot_c[i]) > QDOT_MAX[i]]
