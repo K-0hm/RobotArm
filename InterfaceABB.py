@@ -877,7 +877,7 @@ class Application(tk.Tk):
             return
         forme = self.var_forme.get()
         self.traj_t = Trajectoire(forme.lower(), CENTRE_TRAJ, TAILLE_TRAJ[forme], DUREE_TRAJ,
-                                  "XZ (vertical)", "quintique")
+                          "XZ (vertical)", "lineaire")
         q0 = self.q_pour_point(*self.traj_t.eval(0.0)[0], self.q)
         if q0 is None:
             self.message("Commande : point de depart hors espace de travail.", ROUGE)
